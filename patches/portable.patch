@@ -1,0 +1,530 @@
+diff --git b/usr/bin/barry-launcher b/usr/bin/barry-launcher
+new file mode 100755
+index 0000000..49cf0df
+--- /dev/null
++++ b/usr/bin/barry-launcher
+@@ -0,0 +1,43 @@
++#!/bin/bash
++# barry-launcher: control a running Barry Launcher by hand, or from any
++# button tool when the device has no button of its own for it.
++#
++#   barry-launcher dashboard [on|off]   toggle (or set) the dashboard
++#   barry-launcher home                 bring the home screen forward
++#   barry-launcher config               show the settings in effect
++#   barry-launcher status               are the services running?
++set -euo pipefail
++
++self=$(readlink -f "${BASH_SOURCE[0]}")
++lib=$(cd "$(dirname "$self")/../lib/barry_launcher" && pwd)
++state=$("$lib/barry_launcher_env" /bin/sh -c 'printf %s "$BARRY_STATE_DIR"')
++
++case "${1:-}" in
++  dashboard)
++    mkdir -p "$state"
++    case "${2:-toggle}" in
++      on) v=1 ;;
++      off) v=0 ;;
++      toggle) [[ "$(cat "$state/overlay" 2>/dev/null)" == 1 ]] && v=0 || v=1 ;;
++      *) echo "usage: barry-launcher dashboard [on|off]" >&2; exit 2 ;;
++    esac
++    printf %s "$v" > "$state/overlay"
++    ;;
++  home)
++    mkdir -p "$state"
++    n=$(cat "$state/home" 2>/dev/null || echo 0)
++    [[ "$n" =~ ^[0-9]+$ ]] || n=0
++    printf %s "$((n + 1))" > "$state/home"
++    printf 0 > "$state/overlay"
++    ;;
++  config)
++    exec "$lib/barry_launcher_env" --print
++    ;;
++  status)
++    systemctl --user --no-pager status barry_launcher.service barry_launcher_inputd.service || true
++    ;;
++  *)
++    sed -n '2,9p' "$self" | sed 's/^# \{0,1\}//'
++    [[ -z "${1:-}" || "$1" == -h || "$1" == --help ]] || exit 2
++    ;;
++esac
+diff --git b/usr/lib/barry_launcher/barry_launcher_buttond b/usr/lib/barry_launcher/barry_launcher_buttond
+new file mode 100755
+index 0000000..a50c38e
+--- /dev/null
++++ b/usr/lib/barry_launcher/barry_launcher_buttond
+@@ -0,0 +1,138 @@
++#!/usr/bin/env python3
++"""barry_launcher_buttond: the button that shows Barry Launcher's dashboard.
++
++Portable stand-in for the AYN-button part of pb-os's sm8550-thor-backlightd.
++Grabs the input device named BARRY_BUTTON_DEVICE (the Thor's gpio-keys-ayn)
++and watches key BARRY_BUTTON_CODE (KEY_F24):
++
++  short press           toggles STATE_DIR/overlay ("1" = dashboard up)
++  held LONG_PRESS_S     bumps the counter in STATE_DIR/home (shelld then
++                        brings the home screen forward) and drops the
++                        dashboard
++
++Decided on release, or once held long enough, as in backlightd. Runs as the
++session user inside barry_launcher_session, so the button is Barry's only in
++Game Mode. Opening the device needs read access: install.sh adds a udev rule
++that gives it to the user at the seat. InputPlumber must leave the device
++alone (install.sh writes an override on the Thor), or the grab fails.
++
++What backlightd also does and this does not: one brightness for both
++panels, the Dual Screen switch (and turning the bottom screen on while the
++dashboard is up), and waking Steam's idle dim on bottom-screen touches.
++"""
++from __future__ import annotations
++
++import fcntl
++import glob
++import os
++import select
++import struct
++import time
++
++STATE_DIR = os.environ.get("BARRY_STATE_DIR") or f"/run/user/{os.getuid()}/barry_launcher"
++OVERLAY = f"{STATE_DIR}/overlay"
++HOME = f"{STATE_DIR}/home"  # a request counter; any change means "go home"
++DEVICE = os.environ.get("BARRY_BUTTON_DEVICE", "gpio-keys-ayn")
++CODE = int(os.environ.get("BARRY_BUTTON_CODE") or 194)
++LONG_PRESS_S = float(os.environ.get("BARRY_LONG_PRESS_S") or 0.6)
++EV_KEY = 1
++EVIOCGRAB = 0x40044590
++EVENT = struct.Struct("llHHi")
++POLL_MS = 100
++RETRY_S = 5
++
++
++def log(msg: str) -> None:
++    print(msg, flush=True)
++
++
++def read(path: str, default: str = "") -> str:
++    try:
++        with open(path, encoding="utf-8") as fh:
++            return fh.read().strip()
++    except OSError:
++        return default
++
++
++def write(path: str, value: str) -> None:
++    try:
++        with open(path, "w", encoding="utf-8") as fh:
++            fh.write(value)
++    except OSError as err:
++        log(f"cannot write {value} to {path}: {err}")
++
++
++def open_button() -> int | None:
++    for name_file in glob.glob("/sys/class/input/event*/device/name"):
++        if read(name_file) != DEVICE:
++            continue
++        ev = name_file.split("/")[4]
++        try:
++            fd = os.open(f"/dev/input/{ev}", os.O_RDONLY | os.O_NONBLOCK)
++        except OSError as err:
++            log(f"cannot open {DEVICE} ({ev}): {err}")
++            continue
++        try:
++            fcntl.ioctl(fd, EVIOCGRAB, 1)
++        except OSError as err:
++            log(f"cannot grab {DEVICE}: {err} (does InputPlumber hold it?)")
++            os.close(fd)
++            return None
++        log(f"button on {ev} ({DEVICE}, code {CODE})")
++        return fd
++    return None
++
++
++def main() -> None:
++    if not DEVICE:
++        log("no button configured (BARRY_BUTTON_DEVICE is empty)")
++        while True:
++            time.sleep(3600)
++    os.makedirs(STATE_DIR, exist_ok=True)
++    write(OVERLAY, "0")
++    fd = open_button()
++    retry_at = time.monotonic() + RETRY_S
++    if fd is None:
++        log(f"no {DEVICE} yet; retrying every {RETRY_S} s")
++    pressed_at: float | None = None
++    while True:
++        if fd is None:
++            pressed_at = None
++            time.sleep(POLL_MS / 1000)
++            if time.monotonic() >= retry_at:
++                retry_at = time.monotonic() + RETRY_S
++                fd = open_button()
++            continue
++        poller = select.poll()
++        poller.register(fd, select.POLLIN | select.POLLERR)
++        if poller.poll(POLL_MS):
++            try:
++                data = os.read(fd, EVENT.size * 32)
++            except BlockingIOError:
++                data = b""
++            except OSError:
++                os.close(fd)
++                fd, data = None, b""
++                retry_at = time.monotonic() + RETRY_S
++            for off in range(0, len(data) - EVENT.size + 1, EVENT.size):
++                _, _, etype, code, value = EVENT.unpack_from(data, off)
++                if etype != EV_KEY or code != CODE:
++                    continue
++                if value == 1:
++                    pressed_at = time.monotonic()
++                elif value == 0 and pressed_at is not None:
++                    pressed_at = None
++                    up = read(OVERLAY, "0") != "1"
++                    write(OVERLAY, "1" if up else "0")
++                    log(f"button: dashboard {'shown' if up else 'hidden'}")
++        if pressed_at is not None and time.monotonic() - pressed_at >= LONG_PRESS_S:
++            pressed_at = None  # the release does nothing more
++            count = read(HOME, "0")
++            write(HOME, str(int(count) + 1 if count.isdigit() else 1))
++            if read(OVERLAY, "0") == "1":
++                write(OVERLAY, "0")
++            log("button held: home")
++
++
++if __name__ == "__main__":
++    main()
+diff --git a/usr/lib/barry_launcher/barry_launcher_desktop b/usr/lib/barry_launcher/barry_launcher_desktop
+index 06282b0..c9bd2e4 100755
+--- a/usr/lib/barry_launcher/barry_launcher_desktop
++++ b/usr/lib/barry_launcher/barry_launcher_desktop
+@@ -4,5 +4,9 @@
+ # X11, where a window can refuse keyboard focus; the pointer and keys come
+ # from barry_launcher_inputd, started here if it is not running yet.
+ systemctl --user start barry_launcher_inputd.service
++# Portable version: with Barry Launcher's settings, which give Desktop.qml
++# the bottom panel's connector and size.
++[[ -n "${BARRY_LIB:-}" ]] || exec /usr/lib/barry_launcher/barry_launcher_env "$0" "$@"
+ export QT_QPA_PLATFORM=xcb
+-exec qml6 /usr/share/barry_launcher/shell/Desktop.qml
++exec qml6 /usr/share/barry_launcher/shell/Desktop.qml \
++  -- "$BARRY_BOTTOM_CONNECTOR" "$BARRY_BOTTOM_WIDTH" "$BARRY_BOTTOM_HEIGHT"
+diff --git b/usr/lib/barry_launcher/barry_launcher_env b/usr/lib/barry_launcher/barry_launcher_env
+new file mode 100755
+index 0000000..7754d27
+--- /dev/null
++++ b/usr/lib/barry_launcher/barry_launcher_env
+@@ -0,0 +1,116 @@
++#!/bin/bash
++# barry_launcher_env: Barry Launcher's settings, for every part of it.
++#
++#   barry_launcher_env COMMAND [ARGS...]  run COMMAND with the settings exported
++#   barry_launcher_env --check            exit 0 if this device is one to run on
++#   barry_launcher_env --wait-lease [S]   wait up to S seconds (60) for Game
++#                                         Mode's lease socket
++#   barry_launcher_env --print            show the settings in effect
++#
++# Settings, later ones winning: the defaults below (the AYN Thor), Armada's
++# device profile when running on Armada, /etc/barry-launcher.conf, then
++# ~/.config/barry_launcher/barry-launcher.conf. The files are shell
++# KEY=value lines; see barry-launcher.conf.example.
++set -euo pipefail
++
++BARRY_LIB=$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)
++
++# --- defaults: the AYN Thor ---------------------------------------------------
++BARRY_SHARE=$(cd "$BARRY_LIB/../../share/barry_launcher" 2>/dev/null && pwd || echo /usr/share/barry_launcher)
++# Only run where the device tree's compatible string has this ("" = anywhere).
++BARRY_DEVICE_MATCH="ayn,thor"
++# The bottom panel: DRM connector, size as the session sees it, and how the
++# nested gamescope turns it (gamescope --force-orientation).
++BARRY_BOTTOM_CONNECTOR=DSI-1
++BARRY_BOTTOM_WIDTH=1240
++BARRY_BOTTOM_HEIGHT=1080
++BARRY_BOTTOM_ORIENTATION=right
++# Game Mode's gamescope lends the bottom panel over this socket
++# (gamescope --lease-connector).
++BARRY_LEASE_SOCK=${GAMESCOPE_LEASE_SOCK:-/tmp/gamescope-lease.sock}
++# The button that shows the dashboard (short press) and goes home (hold):
++# an input device by name and a key code (KEY_F24 = 194). Empty name: no
++# button; use `barry-launcher dashboard` / `barry-launcher home` instead.
++BARRY_BUTTON_DEVICE=gpio-keys-ayn
++BARRY_BUTTON_CODE=194
++BARRY_LONG_PRESS_S=0.6
++# Fan and lighting quick controls: a socket that speaks pb-os's
++# sm8550-thor-controlsd protocol. Empty: those controls are hidden.
++BARRY_CONTROLS_SOCKET=
++[[ -S /run/sm8550-thor/controls.sock ]] && BARRY_CONTROLS_SOCKET=/run/sm8550-thor/controls.sock
++# Steam's X display (refresh-rate control) and the rates to offer.
++BARRY_STEAM_DISPLAY=:0
++BARRY_REFRESH_RATES="60 120"
++# Dashboard sources; empty = found automatically.
++BARRY_GPU_DEVFREQ=
++BARRY_BATTERY=
++BARRY_WIFI=
++BARRY_FAN_HWMON=pwmfan
++# The qml runner (Qt 6); empty = the first one found.
++BARRY_QML=
++
++# --- Armada's device profile ---------------------------------------------------
++if [[ -x /usr/libexec/armada/device-env ]]; then
++  if armada=$(/usr/libexec/armada/device-env 2>/dev/null); then
++    eval "$(printf '%s\n' "$armada" | grep -E '^(export )?ARMADA_(SECONDARY_CONNECTOR|PANEL_ORIENTATION|DEVICE_ID)=')" || true
++    [[ -n "${ARMADA_SECONDARY_CONNECTOR:-}" ]] && BARRY_BOTTOM_CONNECTOR=$ARMADA_SECONDARY_CONNECTOR
++    [[ -n "${ARMADA_PANEL_ORIENTATION:-}" ]] && BARRY_BOTTOM_ORIENTATION=$ARMADA_PANEL_ORIENTATION
++  fi
++fi
++
++# --- config files ----------------------------------------------------------------
++for conf in /etc/barry-launcher.conf "${XDG_CONFIG_HOME:-$HOME/.config}/barry_launcher/barry-launcher.conf"; do
++  # shellcheck disable=SC1090
++  [[ -r "$conf" ]] && source "$conf"
++done
++
++# Where the dashboard and home flags live. Not a setting: install.sh writes
++# this path into the pb-os files in place of /run/sm8550-thor.
++BARRY_STATE_DIR=/run/user/$(id -u)/barry_launcher
++
++if [[ -z "$BARRY_QML" ]]; then
++  for q in qml6 qml-qt6 /usr/lib/qt6/bin/qml /usr/lib64/qt6/bin/qml; do
++    if command -v "$q" >/dev/null 2>&1; then BARRY_QML=$(command -v "$q"); break; fi
++  done
++fi
++
++VARS=(BARRY_LIB BARRY_SHARE BARRY_DEVICE_MATCH BARRY_BOTTOM_CONNECTOR BARRY_BOTTOM_WIDTH
++  BARRY_BOTTOM_HEIGHT BARRY_BOTTOM_ORIENTATION BARRY_LEASE_SOCK BARRY_BUTTON_DEVICE
++  BARRY_BUTTON_CODE BARRY_LONG_PRESS_S BARRY_STATE_DIR BARRY_CONTROLS_SOCKET
++  BARRY_STEAM_DISPLAY BARRY_REFRESH_RATES BARRY_GPU_DEVFREQ BARRY_BATTERY BARRY_WIFI
++  BARRY_FAN_HWMON BARRY_QML)
++export "${VARS[@]}"
++export GAMESCOPE_LEASE_SOCK=$BARRY_LEASE_SOCK
++# pb-os's shelld reads the panel height under this name.
++export THOR_BOTTOM_HEIGHT=$BARRY_BOTTOM_HEIGHT
++# pb-os's files run "qml6"; where the runner has another name, a link of that
++# name goes first on PATH.
++if [[ -n "$BARRY_QML" && "$(basename "$BARRY_QML")" != qml6 ]] && ! command -v qml6 >/dev/null 2>&1; then
++  if mkdir -p "$BARRY_STATE_DIR/bin" 2>/dev/null && ln -sfn "$BARRY_QML" "$BARRY_STATE_DIR/bin/qml6" 2>/dev/null; then
++    export PATH="$BARRY_STATE_DIR/bin:$PATH"
++  fi
++fi
++
++case "${1:-}" in
++  --check)
++    [[ -z "$BARRY_DEVICE_MATCH" ]] && exit 0
++    grep -qaF -- "$BARRY_DEVICE_MATCH" /sys/firmware/devicetree/base/compatible 2>/dev/null
++    ;;
++  --wait-lease)
++    for _ in $(seq 1 "${2:-60}"); do
++      [[ -S "$BARRY_LEASE_SOCK" ]] && exit 0
++      sleep 1
++    done
++    echo "barry_launcher_env: no lease socket at $BARRY_LEASE_SOCK" >&2
++    exit 1
++    ;;
++  --print)
++    for v in "${VARS[@]}"; do printf '%s=%q\n' "$v" "${!v}"; done
++    ;;
++  ""|-h|--help)
++    sed -n '2,13p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
++    ;;
++  *)
++    exec "$@"
++    ;;
++esac
+diff --git a/usr/lib/barry_launcher/barry_launcher_run_bottom b/usr/lib/barry_launcher/barry_launcher_run_bottom
+index cbcab90..c8a5126 100755
+--- a/usr/lib/barry_launcher/barry_launcher_run_bottom
++++ b/usr/lib/barry_launcher/barry_launcher_run_bottom
+@@ -4,6 +4,7 @@
+ # one (after Armada's armada-run-bottom). Game Mode's gamescope lends DSI-1
+ # over its lease socket (--lease-connector) and forwards the bottom
+ # touchscreen (--ignore-touch-device); this nested gamescope takes that lease.
++# Portable version: the panel's orientation is BARRY_BOTTOM_ORIENTATION.
+ set -euo pipefail
+ 
+ fail() {
+@@ -27,6 +28,6 @@ exec gamescope \
+   --force-windows-fullscreen \
+   --xwayland-count 1 \
+   --default-touch-mode 4 \
+-  --force-orientation right \
++  --force-orientation "${BARRY_BOTTOM_ORIENTATION:-right}" \
+   --force-composition-rotation \
+   -- "$@"
+diff --git a/usr/lib/barry_launcher/barry_launcher_session b/usr/lib/barry_launcher/barry_launcher_session
+index bb65b5f..9b1fab1 100755
+--- a/usr/lib/barry_launcher/barry_launcher_session
++++ b/usr/lib/barry_launcher/barry_launcher_session
+@@ -10,6 +10,8 @@
+ # stacking and overlays apply.
+ export QT_QPA_PLATFORM=xcb QT_XCB_GL_INTEGRATION=xcb_egl
+ SHELL_QML=/usr/share/barry_launcher/shell
++# Portable version: the AYN button is Barry Launcher's own while it runs.
++/usr/lib/barry_launcher/barry_launcher_buttond &
+ /usr/lib/barry_launcher/barry_launcher_statsd &
+ /usr/lib/barry_launcher/barry_launcher_shelld &
+ qml6 "$SHELL_QML/Shell.qml" &
+diff --git a/usr/lib/barry_launcher/barry_launcher_statsd b/usr/lib/barry_launcher/barry_launcher_statsd
+index 3434345..e407194 100644
+--- a/usr/lib/barry_launcher/barry_launcher_statsd
++++ b/usr/lib/barry_launcher/barry_launcher_statsd
+@@ -27,7 +27,8 @@ and its skins, so a skin is plain QML with no Python of its own:
+ A POST needs a JSON body, a Host of 127.0.0.1 or localhost and no Origin,
+ so a web page cannot change the fan or the settings.
+ 
+-Fan and lighting go through sm8550-thor-controlsd (root) on CONTROLS. The
++Fan and lighting go through sm8550-thor-controlsd (root) on CONTROLS, when
++there is one (pb-os images); without it they are null and skins hide them. The
+ refresh rate is Game Mode's: GAMESCOPE_DYNAMIC_REFRESH on Steam's display,
+ the property Steam's own refresh slider sets, so the two agree; Steam sets it
+ again when a game with its own refresh setting starts.
+@@ -43,6 +44,10 @@ Sources: gamescope's stats pipe (fps= lines; nothing else reads it),
+ cpufreq, the GPU devfreq node, thermal zones, the pwm fan, the battery and
+ /proc. Everything is readable without root. Skins live in SKIN_DIRS, first
+ match wins, so a user skin can replace a built-in one of the same name.
++
++Portable version: the GPU, battery, Wi-Fi interface, fan, controls socket,
++Steam display and refresh rates come from barry_launcher_env (BARRY_*
++variables), or are found automatically.
+ """
+ from __future__ import annotations
+ 
+@@ -56,15 +61,29 @@ import threading
+ import time
+ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+ 
++def _first(pattern: str, test=lambda _p: True, default: str = "") -> str:
++    return next((p for p in sorted(glob.glob(pattern)) if test(p)), default)
++
++
++def _is_battery(p: str) -> bool:
++    try:
++        with open(f"{p}/type", encoding="utf-8") as fh:
++            return fh.read().strip() == "Battery"
++    except OSError:
++        return False
++
++
+ PORT = 47823
+ API = 1
+-GPU = "/sys/class/devfreq/3d00000.gpu"
+-BATTERY = "/sys/class/power_supply/battery"
+-WIFI = "wlan0"
++GPU = os.environ.get("BARRY_GPU_DEVFREQ") or _first("/sys/class/devfreq/*.gpu", default="/sys/class/devfreq/3d00000.gpu")
++BATTERY = os.environ.get("BARRY_BATTERY") or _first("/sys/class/power_supply/*", _is_battery,
++                                                    "/sys/class/power_supply/battery")
++WIFI = os.environ.get("BARRY_WIFI") or os.path.basename(_first("/sys/class/net/wl*", default="wlan0"))
+ OVERLAY = "/run/sm8550-thor/overlay"
+-CONTROLS = "/run/sm8550-thor/controls.sock"
+-STEAM_DISPLAY = ":0"
+-REFRESH_RATES = [60, 120]
++CONTROLS = os.environ.get("BARRY_CONTROLS_SOCKET", "")
++FAN_HWMON = os.environ.get("BARRY_FAN_HWMON") or "pwmfan"
++STEAM_DISPLAY = os.environ.get("BARRY_STEAM_DISPLAY") or ":0"
++REFRESH_RATES = [int(r) for r in (os.environ.get("BARRY_REFRESH_RATES") or "60 120").split()]
+ MIN_SAMPLE_S = 0.8
+ HOME = os.path.expanduser("~")
+ SKIN_DIRS = [
+@@ -110,7 +129,7 @@ class Stats:
+         # under load, more than people expect a CPU reading to show.
+         self.cpu_zones = [z for z in self.zones if read(f"{z}/type").startswith("cpu")]
+         self.fan = next(
+-            (h for h in glob.glob("/sys/class/hwmon/hwmon*") if read(f"{h}/name") == "pwmfan"),
++            (h for h in glob.glob("/sys/class/hwmon/hwmon*") if read(f"{h}/name") == FAN_HWMON),
+             None,
+         )
+         threading.Thread(target=self._fps_reader, daemon=True).start()
+@@ -256,6 +275,8 @@ def clean(new: dict) -> dict:
+ 
+ 
+ def controlsd(req: dict) -> dict | None:
++    if not CONTROLS:
++        return None
+     try:
+         with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as sock:
+             sock.settimeout(3)
+@@ -301,7 +322,8 @@ def set_controls(body: dict) -> tuple[int, dict]:
+     if "fanProfile" in body or "lighting" in body:
+         reply = controlsd({"op": "set", **{k: body[k] for k in ("fanProfile", "lighting") if k in body}})
+         if reply is None:
+-            return 503, {"error": "sm8550-thor-controlsd is not running"}
++            return 503, {"error": "no controls service (BARRY_CONTROLS_SOCKET)" if not CONTROLS
++                     else "the controls service is not running"}
+         if "error" in reply:
+             return 400, reply
+     if "refreshHz" in body:
+diff --git a/usr/lib/systemd/user/barry_launcher.service b/usr/lib/systemd/user/barry_launcher.service
+index 7b0ea50..a5cfeca 100644
+--- a/usr/lib/systemd/user/barry_launcher.service
++++ b/usr/lib/systemd/user/barry_launcher.service
+@@ -1,14 +1,16 @@
+ [Unit]
+ Description=Barry Launcher: AYN Thor bottom-screen home, apps and dashboard
+-PartOf=gamescope-session.target
+-After=gamescope-session.service
++PartOf=@SESSION_UNIT@
++After=@SESSION_UNIT@
+ 
+ [Service]
+ Type=simple
+-ExecCondition=/bin/sh -c 'grep -qa "ayn,thor" /sys/firmware/devicetree/base/compatible'
++# Portable version: install.sh fills in @SESSION_UNIT@ and the paths; the
++# device check, lease socket and orientation come from barry_launcher_env.
++ExecCondition=/usr/lib/barry_launcher/barry_launcher_env --check
+ # Game Mode's gamescope creates the lease socket once it is up.
+-ExecStartPre=/bin/sh -c 'for i in $(seq 1 60); do [ -S /tmp/gamescope-lease.sock ] && exit 0; sleep 1; done; exit 1'
+-ExecStart=/usr/lib/steamos-sm8550/sm8550-run-bottom -- /usr/lib/barry_launcher/barry_launcher_session
++ExecStartPre=/usr/lib/barry_launcher/barry_launcher_env --wait-lease 60
++ExecStart=/usr/lib/barry_launcher/barry_launcher_env /usr/lib/barry_launcher/barry_launcher_run_bottom -- /usr/lib/barry_launcher/barry_launcher_session
+ Restart=on-failure
+ RestartSec=3
+ # The nested gamescope can ignore SIGTERM; don't hold up a Game Mode restart
+@@ -16,4 +18,4 @@ RestartSec=3
+ TimeoutStopSec=5
+ 
+ [Install]
+-WantedBy=gamescope-session.target
++WantedBy=@SESSION_UNIT@
+diff --git a/usr/lib/systemd/user/barry_launcher_inputd.service b/usr/lib/systemd/user/barry_launcher_inputd.service
+index 34b42c5..7941f04 100644
+--- a/usr/lib/systemd/user/barry_launcher_inputd.service
++++ b/usr/lib/systemd/user/barry_launcher_inputd.service
+@@ -3,7 +3,8 @@ Description=Barry Launcher: AYN Thor top-screen trackpad and keyboard (uinput)
+ 
+ [Service]
+ Type=simple
+-ExecCondition=/bin/sh -c 'grep -qa "ayn,thor" /sys/firmware/devicetree/base/compatible'
++# Portable version: the device check is barry_launcher_env's.
++ExecCondition=/usr/lib/barry_launcher/barry_launcher_env --check
+ ExecStart=/usr/lib/barry_launcher/barry_launcher_inputd
+ # /dev/uinput opens to the user once logind has made the seat theirs.
+ Restart=on-failure
+diff --git a/usr/share/barry_launcher/shell/Desktop.qml b/usr/share/barry_launcher/shell/Desktop.qml
+index 2180fc7..8eb14ce 100644
+--- a/usr/share/barry_launcher/shell/Desktop.qml
++++ b/usr/share/barry_launcher/shell/Desktop.qml
+@@ -15,15 +15,24 @@ Window {
+ 
+     readonly property real s: Math.min(width / 1240, height / 1080)
+ 
+-    // The bottom panel: DSI-1, or else the screen shaped like it.
++    // Portable version: barry_launcher_desktop passes the bottom panel's
++    // connector, width and height after "--" (default: the Thor's).
++    readonly property var panel: {
++        const args = Qt.application.arguments
++        const i = args.indexOf("--")
++        const a = i >= 0 ? args.slice(i + 1) : []
++        return { name: a[0] || "DSI-1", w: parseInt(a[1]) || 1240, h: parseInt(a[2]) || 1080 }
++    }
++
++    // The bottom panel: by connector, or else the screen shaped like it.
+     function bottomScreen() {
+         const all = Qt.application.screens
+         for (let i = 0; i < all.length; i++)
+-            if (all[i].name === "DSI-1")
++            if (all[i].name === panel.name)
+                 return all[i]
+         for (let i = 0; i < all.length; i++) {
+             const w = all[i].width, h = all[i].height
+-            if ((w === 1240 && h === 1080) || (w === 1080 && h === 1240))
++            if ((w === panel.w && h === panel.h) || (w === panel.h && h === panel.w))
+                 return all[i]
+         }
+         return null

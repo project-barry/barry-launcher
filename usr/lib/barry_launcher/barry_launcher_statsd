@@ -27,7 +27,8 @@ and its skins, so a skin is plain QML with no Python of its own:
 A POST needs a JSON body, a Host of 127.0.0.1 or localhost and no Origin,
 so a web page cannot change the fan or the settings.
 
-Fan and lighting go through sm8550-thor-controlsd (root) on CONTROLS. The
+Fan and lighting go through sm8550-thor-controlsd (root) on CONTROLS, when
+there is one (pb-os images); without it they are null and skins hide them. The
 refresh rate is Game Mode's: GAMESCOPE_DYNAMIC_REFRESH on Steam's display,
 the property Steam's own refresh slider sets, so the two agree; Steam sets it
 again when a game with its own refresh setting starts.
@@ -43,6 +44,10 @@ Sources: gamescope's stats pipe (fps= lines; nothing else reads it),
 cpufreq, the GPU devfreq node, thermal zones, the pwm fan, the battery and
 /proc. Everything is readable without root. Skins live in SKIN_DIRS, first
 match wins, so a user skin can replace a built-in one of the same name.
+
+Portable version: the GPU, battery, Wi-Fi interface, fan, controls socket,
+Steam display and refresh rates come from barry_launcher_env (BARRY_*
+variables), or are found automatically.
 """
 from __future__ import annotations
 
@@ -56,15 +61,29 @@ import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
+def _first(pattern: str, test=lambda _p: True, default: str = "") -> str:
+    return next((p for p in sorted(glob.glob(pattern)) if test(p)), default)
+
+
+def _is_battery(p: str) -> bool:
+    try:
+        with open(f"{p}/type", encoding="utf-8") as fh:
+            return fh.read().strip() == "Battery"
+    except OSError:
+        return False
+
+
 PORT = 47823
 API = 1
-GPU = "/sys/class/devfreq/3d00000.gpu"
-BATTERY = "/sys/class/power_supply/battery"
-WIFI = "wlan0"
+GPU = os.environ.get("BARRY_GPU_DEVFREQ") or _first("/sys/class/devfreq/*.gpu", default="/sys/class/devfreq/3d00000.gpu")
+BATTERY = os.environ.get("BARRY_BATTERY") or _first("/sys/class/power_supply/*", _is_battery,
+                                                    "/sys/class/power_supply/battery")
+WIFI = os.environ.get("BARRY_WIFI") or os.path.basename(_first("/sys/class/net/wl*", default="wlan0"))
 OVERLAY = "/run/sm8550-thor/overlay"
-CONTROLS = "/run/sm8550-thor/controls.sock"
-STEAM_DISPLAY = ":0"
-REFRESH_RATES = [60, 120]
+CONTROLS = os.environ.get("BARRY_CONTROLS_SOCKET", "")
+FAN_HWMON = os.environ.get("BARRY_FAN_HWMON") or "pwmfan"
+STEAM_DISPLAY = os.environ.get("BARRY_STEAM_DISPLAY") or ":0"
+REFRESH_RATES = [int(r) for r in (os.environ.get("BARRY_REFRESH_RATES") or "60 120").split()]
 MIN_SAMPLE_S = 0.8
 HOME = os.path.expanduser("~")
 SKIN_DIRS = [
@@ -110,7 +129,7 @@ class Stats:
         # under load, more than people expect a CPU reading to show.
         self.cpu_zones = [z for z in self.zones if read(f"{z}/type").startswith("cpu")]
         self.fan = next(
-            (h for h in glob.glob("/sys/class/hwmon/hwmon*") if read(f"{h}/name") == "pwmfan"),
+            (h for h in glob.glob("/sys/class/hwmon/hwmon*") if read(f"{h}/name") == FAN_HWMON),
             None,
         )
         threading.Thread(target=self._fps_reader, daemon=True).start()
@@ -256,6 +275,8 @@ def clean(new: dict) -> dict:
 
 
 def controlsd(req: dict) -> dict | None:
+    if not CONTROLS:
+        return None
     try:
         with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as sock:
             sock.settimeout(3)
@@ -301,7 +322,8 @@ def set_controls(body: dict) -> tuple[int, dict]:
     if "fanProfile" in body or "lighting" in body:
         reply = controlsd({"op": "set", **{k: body[k] for k in ("fanProfile", "lighting") if k in body}})
         if reply is None:
-            return 503, {"error": "sm8550-thor-controlsd is not running"}
+            return 503, {"error": "no controls service (BARRY_CONTROLS_SOCKET)" if not CONTROLS
+                     else "the controls service is not running"}
         if "error" in reply:
             return 400, reply
     if "refreshHz" in body:

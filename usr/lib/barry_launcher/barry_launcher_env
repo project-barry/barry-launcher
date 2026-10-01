@@ -1,0 +1,116 @@
+#!/bin/bash
+# barry_launcher_env: Barry Launcher's settings, for every part of it.
+#
+#   barry_launcher_env COMMAND [ARGS...]  run COMMAND with the settings exported
+#   barry_launcher_env --check            exit 0 if this device is one to run on
+#   barry_launcher_env --wait-lease [S]   wait up to S seconds (60) for Game
+#                                         Mode's lease socket
+#   barry_launcher_env --print            show the settings in effect
+#
+# Settings, later ones winning: the defaults below (the AYN Thor), Armada's
+# device profile when running on Armada, /etc/barry-launcher.conf, then
+# ~/.config/barry_launcher/barry-launcher.conf. The files are shell
+# KEY=value lines; see barry-launcher.conf.example.
+set -euo pipefail
+
+BARRY_LIB=$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)
+
+# --- defaults: the AYN Thor ---------------------------------------------------
+BARRY_SHARE=$(cd "$BARRY_LIB/../../share/barry_launcher" 2>/dev/null && pwd || echo /usr/share/barry_launcher)
+# Only run where the device tree's compatible string has this ("" = anywhere).
+BARRY_DEVICE_MATCH="ayn,thor"
+# The bottom panel: DRM connector, size as the session sees it, and how the
+# nested gamescope turns it (gamescope --force-orientation).
+BARRY_BOTTOM_CONNECTOR=DSI-1
+BARRY_BOTTOM_WIDTH=1240
+BARRY_BOTTOM_HEIGHT=1080
+BARRY_BOTTOM_ORIENTATION=right
+# Game Mode's gamescope lends the bottom panel over this socket
+# (gamescope --lease-connector).
+BARRY_LEASE_SOCK=${GAMESCOPE_LEASE_SOCK:-/tmp/gamescope-lease.sock}
+# The button that shows the dashboard (short press) and goes home (hold):
+# an input device by name and a key code (KEY_F24 = 194). Empty name: no
+# button; use `barry-launcher dashboard` / `barry-launcher home` instead.
+BARRY_BUTTON_DEVICE=gpio-keys-ayn
+BARRY_BUTTON_CODE=194
+BARRY_LONG_PRESS_S=0.6
+# Fan and lighting quick controls: a socket that speaks pb-os's
+# sm8550-thor-controlsd protocol. Empty: those controls are hidden.
+BARRY_CONTROLS_SOCKET=
+[[ -S /run/sm8550-thor/controls.sock ]] && BARRY_CONTROLS_SOCKET=/run/sm8550-thor/controls.sock
+# Steam's X display (refresh-rate control) and the rates to offer.
+BARRY_STEAM_DISPLAY=:0
+BARRY_REFRESH_RATES="60 120"
+# Dashboard sources; empty = found automatically.
+BARRY_GPU_DEVFREQ=
+BARRY_BATTERY=
+BARRY_WIFI=
+BARRY_FAN_HWMON=pwmfan
+# The qml runner (Qt 6); empty = the first one found.
+BARRY_QML=
+
+# --- Armada's device profile ---------------------------------------------------
+if [[ -x /usr/libexec/armada/device-env ]]; then
+  if armada=$(/usr/libexec/armada/device-env 2>/dev/null); then
+    eval "$(printf '%s\n' "$armada" | grep -E '^(export )?ARMADA_(SECONDARY_CONNECTOR|PANEL_ORIENTATION|DEVICE_ID)=')" || true
+    [[ -n "${ARMADA_SECONDARY_CONNECTOR:-}" ]] && BARRY_BOTTOM_CONNECTOR=$ARMADA_SECONDARY_CONNECTOR
+    [[ -n "${ARMADA_PANEL_ORIENTATION:-}" ]] && BARRY_BOTTOM_ORIENTATION=$ARMADA_PANEL_ORIENTATION
+  fi
+fi
+
+# --- config files ----------------------------------------------------------------
+for conf in /etc/barry-launcher.conf "${XDG_CONFIG_HOME:-$HOME/.config}/barry_launcher/barry-launcher.conf"; do
+  # shellcheck disable=SC1090
+  [[ -r "$conf" ]] && source "$conf"
+done
+
+# Where the dashboard and home flags live. Not a setting: install.sh writes
+# this path into the pb-os files in place of /run/sm8550-thor.
+BARRY_STATE_DIR=/run/user/$(id -u)/barry_launcher
+
+if [[ -z "$BARRY_QML" ]]; then
+  for q in qml6 qml-qt6 /usr/lib/qt6/bin/qml /usr/lib64/qt6/bin/qml; do
+    if command -v "$q" >/dev/null 2>&1; then BARRY_QML=$(command -v "$q"); break; fi
+  done
+fi
+
+VARS=(BARRY_LIB BARRY_SHARE BARRY_DEVICE_MATCH BARRY_BOTTOM_CONNECTOR BARRY_BOTTOM_WIDTH
+  BARRY_BOTTOM_HEIGHT BARRY_BOTTOM_ORIENTATION BARRY_LEASE_SOCK BARRY_BUTTON_DEVICE
+  BARRY_BUTTON_CODE BARRY_LONG_PRESS_S BARRY_STATE_DIR BARRY_CONTROLS_SOCKET
+  BARRY_STEAM_DISPLAY BARRY_REFRESH_RATES BARRY_GPU_DEVFREQ BARRY_BATTERY BARRY_WIFI
+  BARRY_FAN_HWMON BARRY_QML)
+export "${VARS[@]}"
+export GAMESCOPE_LEASE_SOCK=$BARRY_LEASE_SOCK
+# pb-os's shelld reads the panel height under this name.
+export THOR_BOTTOM_HEIGHT=$BARRY_BOTTOM_HEIGHT
+# pb-os's files run "qml6"; where the runner has another name, a link of that
+# name goes first on PATH.
+if [[ -n "$BARRY_QML" && "$(basename "$BARRY_QML")" != qml6 ]] && ! command -v qml6 >/dev/null 2>&1; then
+  if mkdir -p "$BARRY_STATE_DIR/bin" 2>/dev/null && ln -sfn "$BARRY_QML" "$BARRY_STATE_DIR/bin/qml6" 2>/dev/null; then
+    export PATH="$BARRY_STATE_DIR/bin:$PATH"
+  fi
+fi
+
+case "${1:-}" in
+  --check)
+    [[ -z "$BARRY_DEVICE_MATCH" ]] && exit 0
+    grep -qaF -- "$BARRY_DEVICE_MATCH" /sys/firmware/devicetree/base/compatible 2>/dev/null
+    ;;
+  --wait-lease)
+    for _ in $(seq 1 "${2:-60}"); do
+      [[ -S "$BARRY_LEASE_SOCK" ]] && exit 0
+      sleep 1
+    done
+    echo "barry_launcher_env: no lease socket at $BARRY_LEASE_SOCK" >&2
+    exit 1
+    ;;
+  --print)
+    for v in "${VARS[@]}"; do printf '%s=%q\n' "$v" "${!v}"; done
+    ;;
+  ""|-h|--help)
+    sed -n '2,13p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+    ;;
+  *)
+    exec "$@"
+    ;;
+esac

@@ -1,14 +1,16 @@
 [Unit]
 Description=Barry Launcher: AYN Thor bottom-screen home, apps and dashboard
-PartOf=gamescope-session.target
-After=gamescope-session.service
+PartOf=@SESSION_UNIT@
+After=@SESSION_UNIT@
 
 [Service]
 Type=simple
-ExecCondition=/bin/sh -c 'grep -qa "ayn,thor" /sys/firmware/devicetree/base/compatible'
+# Portable version: install.sh fills in @SESSION_UNIT@ and the paths; the
+# device check, lease socket and orientation come from barry_launcher_env.
+ExecCondition=/usr/lib/barry_launcher/barry_launcher_env --check
 # Game Mode's gamescope creates the lease socket once it is up.
-ExecStartPre=/bin/sh -c 'for i in $(seq 1 60); do [ -S /tmp/gamescope-lease.sock ] && exit 0; sleep 1; done; exit 1'
-ExecStart=/usr/lib/steamos-sm8550/sm8550-run-bottom -- /usr/lib/barry_launcher/barry_launcher_session
+ExecStartPre=/usr/lib/barry_launcher/barry_launcher_env --wait-lease 60
+ExecStart=/usr/lib/barry_launcher/barry_launcher_env /usr/lib/barry_launcher/barry_launcher_run_bottom -- /usr/lib/barry_launcher/barry_launcher_session
 Restart=on-failure
 RestartSec=3
 # The nested gamescope can ignore SIGTERM; don't hold up a Game Mode restart
@@ -16,4 +18,4 @@ RestartSec=3
 TimeoutStopSec=5
 
 [Install]
-WantedBy=gamescope-session.target
+WantedBy=@SESSION_UNIT@

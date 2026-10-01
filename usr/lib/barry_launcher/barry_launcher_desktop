@@ -4,5 +4,9 @@
 # X11, where a window can refuse keyboard focus; the pointer and keys come
 # from barry_launcher_inputd, started here if it is not running yet.
 systemctl --user start barry_launcher_inputd.service
+# Portable version: with Barry Launcher's settings, which give Desktop.qml
+# the bottom panel's connector and size.
+[[ -n "${BARRY_LIB:-}" ]] || exec /usr/lib/barry_launcher/barry_launcher_env "$0" "$@"
 export QT_QPA_PLATFORM=xcb
-exec qml6 /usr/share/barry_launcher/shell/Desktop.qml
+exec qml6 /usr/share/barry_launcher/shell/Desktop.qml \
+  -- "$BARRY_BOTTOM_CONNECTOR" "$BARRY_BOTTOM_WIDTH" "$BARRY_BOTTOM_HEIGHT"

@@ -1,0 +1,138 @@
+#!/usr/bin/env python3
+"""barry_launcher_buttond: the button that shows Barry Launcher's dashboard.
+
+Portable stand-in for the AYN-button part of pb-os's sm8550-thor-backlightd.
+Grabs the input device named BARRY_BUTTON_DEVICE (the Thor's gpio-keys-ayn)
+and watches key BARRY_BUTTON_CODE (KEY_F24):
+
+  short press           toggles STATE_DIR/overlay ("1" = dashboard up)
+  held LONG_PRESS_S     bumps the counter in STATE_DIR/home (shelld then
+                        brings the home screen forward) and drops the
+                        dashboard
+
+Decided on release, or once held long enough, as in backlightd. Runs as the
+session user inside barry_launcher_session, so the button is Barry's only in
+Game Mode. Opening the device needs read access: install.sh adds a udev rule
+that gives it to the user at the seat. InputPlumber must leave the device
+alone (install.sh writes an override on the Thor), or the grab fails.
+
+What backlightd also does and this does not: one brightness for both
+panels, the Dual Screen switch (and turning the bottom screen on while the
+dashboard is up), and waking Steam's idle dim on bottom-screen touches.
+"""
+from __future__ import annotations
+
+import fcntl
+import glob
+import os
+import select
+import struct
+import time
+
+STATE_DIR = os.environ.get("BARRY_STATE_DIR") or f"/run/user/{os.getuid()}/barry_launcher"
+OVERLAY = f"{STATE_DIR}/overlay"
+HOME = f"{STATE_DIR}/home"  # a request counter; any change means "go home"
+DEVICE = os.environ.get("BARRY_BUTTON_DEVICE", "gpio-keys-ayn")
+CODE = int(os.environ.get("BARRY_BUTTON_CODE") or 194)
+LONG_PRESS_S = float(os.environ.get("BARRY_LONG_PRESS_S") or 0.6)
+EV_KEY = 1
+EVIOCGRAB = 0x40044590
+EVENT = struct.Struct("llHHi")
+POLL_MS = 100
+RETRY_S = 5
+
+
+def log(msg: str) -> None:
+    print(msg, flush=True)
+
+
+def read(path: str, default: str = "") -> str:
+    try:
+        with open(path, encoding="utf-8") as fh:
+            return fh.read().strip()
+    except OSError:
+        return default
+
+
+def write(path: str, value: str) -> None:
+    try:
+        with open(path, "w", encoding="utf-8") as fh:
+            fh.write(value)
+    except OSError as err:
+        log(f"cannot write {value} to {path}: {err}")
+
+
+def open_button() -> int | None:
+    for name_file in glob.glob("/sys/class/input/event*/device/name"):
+        if read(name_file) != DEVICE:
+            continue
+        ev = name_file.split("/")[4]
+        try:
+            fd = os.open(f"/dev/input/{ev}", os.O_RDONLY | os.O_NONBLOCK)
+        except OSError as err:
+            log(f"cannot open {DEVICE} ({ev}): {err}")
+            continue
+        try:
+            fcntl.ioctl(fd, EVIOCGRAB, 1)
+        except OSError as err:
+            log(f"cannot grab {DEVICE}: {err} (does InputPlumber hold it?)")
+            os.close(fd)
+            return None
+        log(f"button on {ev} ({DEVICE}, code {CODE})")
+        return fd
+    return None
+
+
+def main() -> None:
+    if not DEVICE:
+        log("no button configured (BARRY_BUTTON_DEVICE is empty)")
+        while True:
+            time.sleep(3600)
+    os.makedirs(STATE_DIR, exist_ok=True)
+    write(OVERLAY, "0")
+    fd = open_button()
+    retry_at = time.monotonic() + RETRY_S
+    if fd is None:
+        log(f"no {DEVICE} yet; retrying every {RETRY_S} s")
+    pressed_at: float | None = None
+    while True:
+        if fd is None:
+            pressed_at = None
+            time.sleep(POLL_MS / 1000)
+            if time.monotonic() >= retry_at:
+                retry_at = time.monotonic() + RETRY_S
+                fd = open_button()
+            continue
+        poller = select.poll()
+        poller.register(fd, select.POLLIN | select.POLLERR)
+        if poller.poll(POLL_MS):
+            try:
+                data = os.read(fd, EVENT.size * 32)
+            except BlockingIOError:
+                data = b""
+            except OSError:
+                os.close(fd)
+                fd, data = None, b""
+                retry_at = time.monotonic() + RETRY_S
+            for off in range(0, len(data) - EVENT.size + 1, EVENT.size):
+                _, _, etype, code, value = EVENT.unpack_from(data, off)
+                if etype != EV_KEY or code != CODE:
+                    continue
+                if value == 1:
+                    pressed_at = time.monotonic()
+                elif value == 0 and pressed_at is not None:
+                    pressed_at = None
+                    up = read(OVERLAY, "0") != "1"
+                    write(OVERLAY, "1" if up else "0")
+                    log(f"button: dashboard {'shown' if up else 'hidden'}")
+        if pressed_at is not None and time.monotonic() - pressed_at >= LONG_PRESS_S:
+            pressed_at = None  # the release does nothing more
+            count = read(HOME, "0")
+            write(HOME, str(int(count) + 1 if count.isdigit() else 1))
+            if read(OVERLAY, "0") == "1":
+                write(OVERLAY, "0")
+            log("button held: home")
+
+
+if __name__ == "__main__":
+    main()

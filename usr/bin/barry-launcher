@@ -1,0 +1,43 @@
+#!/bin/bash
+# barry-launcher: control a running Barry Launcher by hand, or from any
+# button tool when the device has no button of its own for it.
+#
+#   barry-launcher dashboard [on|off]   toggle (or set) the dashboard
+#   barry-launcher home                 bring the home screen forward
+#   barry-launcher config               show the settings in effect
+#   barry-launcher status               are the services running?
+set -euo pipefail
+
+self=$(readlink -f "${BASH_SOURCE[0]}")
+lib=$(cd "$(dirname "$self")/../lib/barry_launcher" && pwd)
+state=$("$lib/barry_launcher_env" /bin/sh -c 'printf %s "$BARRY_STATE_DIR"')
+
+case "${1:-}" in
+  dashboard)
+    mkdir -p "$state"
+    case "${2:-toggle}" in
+      on) v=1 ;;
+      off) v=0 ;;
+      toggle) [[ "$(cat "$state/overlay" 2>/dev/null)" == 1 ]] && v=0 || v=1 ;;
+      *) echo "usage: barry-launcher dashboard [on|off]" >&2; exit 2 ;;
+    esac
+    printf %s "$v" > "$state/overlay"
+    ;;
+  home)
+    mkdir -p "$state"
+    n=$(cat "$state/home" 2>/dev/null || echo 0)
+    [[ "$n" =~ ^[0-9]+$ ]] || n=0
+    printf %s "$((n + 1))" > "$state/home"
+    printf 0 > "$state/overlay"
+    ;;
+  config)
+    exec "$lib/barry_launcher_env" --print
+    ;;
+  status)
+    systemctl --user --no-pager status barry_launcher.service barry_launcher_inputd.service || true
+    ;;
+  *)
+    sed -n '2,9p' "$self" | sed 's/^# \{0,1\}//'
+    [[ -z "${1:-}" || "$1" == -h || "$1" == --help ]] || exit 2
+    ;;
+esac

@@ -4,6 +4,7 @@
 # one (after Armada's armada-run-bottom). Game Mode's gamescope lends DSI-1
 # over its lease socket (--lease-connector) and forwards the bottom
 # touchscreen (--ignore-touch-device); this nested gamescope takes that lease.
+# Portable version: the panel's orientation is BARRY_BOTTOM_ORIENTATION.
 set -euo pipefail
 
 fail() {
@@ -27,6 +28,6 @@ exec gamescope \
   --force-windows-fullscreen \
   --xwayland-count 1 \
   --default-touch-mode 4 \
-  --force-orientation right \
+  --force-orientation "${BARRY_BOTTOM_ORIENTATION:-right}" \
   --force-composition-rotation \
   -- "$@"

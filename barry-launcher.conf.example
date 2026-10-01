@@ -1,0 +1,46 @@
+# Barry Launcher settings. Copy to ~/.config/barry_launcher/barry-launcher.conf
+# (install.sh does) or /etc/barry-launcher.conf and uncomment what you need.
+# Shell syntax: KEY=value, no spaces around "=". The defaults are the AYN
+# Thor's; on Armada the bottom connector and orientation come from Armada's
+# device profile. `barry-launcher config` shows what is in effect.
+
+# Run only where the device tree's compatible string contains this
+# ("" = on any device).
+#BARRY_DEVICE_MATCH="ayn,thor"
+
+# The bottom panel: DRM connector, size as apps see it, and how gamescope
+# turns it (normal, left, right, upsidedown).
+#BARRY_BOTTOM_CONNECTOR=DSI-1
+#BARRY_BOTTOM_WIDTH=1240
+#BARRY_BOTTOM_HEIGHT=1080
+#BARRY_BOTTOM_ORIENTATION=right
+
+# The socket Game Mode's gamescope lends the bottom panel on
+# (gamescope --lease-connector ...).
+#BARRY_LEASE_SOCK=/tmp/gamescope-lease.sock
+
+# The dashboard button: input device name and key code (KEY_F24 = 194).
+# Empty device: no button; run `barry-launcher dashboard` / `barry-launcher
+# home` from a button tool instead. After changing the device, run
+# install.sh again so its udev rule follows.
+#BARRY_BUTTON_DEVICE=gpio-keys-ayn
+#BARRY_BUTTON_CODE=194
+#BARRY_LONG_PRESS_S=0.6
+
+# Fan and lighting quick controls: a socket speaking pb-os's
+# sm8550-thor-controlsd protocol (found automatically on pb-os images).
+# Empty: the dashboard leaves those controls out.
+#BARRY_CONTROLS_SOCKET=
+
+# Steam's X display, and the refresh rates the dashboard offers.
+#BARRY_STEAM_DISPLAY=:0
+#BARRY_REFRESH_RATES="60 120"
+
+# Dashboard sources; empty = found automatically.
+#BARRY_GPU_DEVFREQ=/sys/class/devfreq/3d00000.gpu
+#BARRY_BATTERY=/sys/class/power_supply/battery
+#BARRY_WIFI=wlan0
+#BARRY_FAN_HWMON=pwmfan
+
+# The Qt 6 qml runner; empty = the first of qml6, qml-qt6, qt6/bin/qml.
+#BARRY_QML=
