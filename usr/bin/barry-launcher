@@ -6,6 +6,8 @@
 #   barry-launcher home                 bring the home screen forward
 #   barry-launcher config               show the settings in effect
 #   barry-launcher status               are the services running?
+#   barry-launcher uninstall [--purge | --keep-data]
+#                                       remove Barry Launcher completely
 set -euo pipefail
 
 self=$(readlink -f "${BASH_SOURCE[0]}")
@@ -35,9 +37,23 @@ case "${1:-}" in
     ;;
   status)
     systemctl --user --no-pager status barry_launcher.service barry_launcher_inputd.service || true
+    # The InputPlumber override is a copy of the OS's file minus the AYN
+    # button; after an OS update changes that file, the copy is stale.
+    src=/usr/share/inputplumber/devices/50-ayn_thor.yaml
+    dst=/etc/inputplumber/devices.d/50-ayn_thor.yaml
+    if sum=$(grep -o "installed by Barry Launcher's install.sh; source sha256 [0-9a-f]*" "$dst" 2>/dev/null); then
+      if [[ "${sum##* }" != "$(sha256sum "$src" 2>/dev/null | cut -d' ' -f1)" ]]; then
+        echo "! InputPlumber's $src changed since Barry Launcher copied it to $dst;"
+        echo "  run install.sh again so the copy follows (your controller settings may be out of date)."
+      fi
+    fi
+    ;;
+  uninstall)
+    shift
+    exec "$lib/barry_launcher_uninstall" "$@"
     ;;
   *)
-    sed -n '2,9p' "$self" | sed 's/^# \{0,1\}//'
+    sed -n '2,11p' "$self" | sed 's/^# \{0,1\}//'
     [[ -z "${1:-}" || "$1" == -h || "$1" == --help ]] || exit 2
     ;;
 esac

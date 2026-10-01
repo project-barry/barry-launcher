@@ -6,10 +6,10 @@ other ARM ports of SteamOS.
 
 > [!WARNING]
 > **Untested.** This portable version has not run on a device yet. It will be
-> tested once a second AYN Thor is available. Until then, expect rough edges,
-> and keep a way to undo it (`./install.sh --uninstall`). The tested version
-> is the one built into [pb-os](https://github.com/project-barry/pb-os) Thor
-> images.
+> tested once a second AYN Thor is available. Until then, expect rough edges.
+> It removes cleanly at any time with `barry-launcher uninstall` (see
+> [Uninstall](#uninstall)). The tested version is the one built into
+> [pb-os](https://github.com/project-barry/pb-os) Thor images.
 
 ## What it does
 
@@ -87,23 +87,62 @@ It asks for `sudo` for two system files:
 `--no-root` skips both. Barry Launcher starts with Game Mode.
 
 ```sh
-./install.sh --uninstall        # remove it (keeps your settings)
-./install.sh --uninstall --purge
-barry-launcher config           # the settings in effect (~/.local/bin)
+barry-launcher config           # the settings in effect (in ~/.local/bin)
 barry-launcher dashboard        # toggle the dashboard without the button
 barry-launcher home
+barry-launcher status           # services running? InputPlumber copy current?
 journalctl --user -u barry_launcher -u barry_launcher_inputd
 ```
 
-To update, `git pull` and run `./install.sh` again.
+To update, `git pull` and run `./install.sh` again. It replaces the old copy
+completely and keeps your data.
+
+## Uninstall
+
+```sh
+barry-launcher uninstall
+```
+
+You don't need this repo for that; the command carries its own copy of the
+uninstaller. If the command is gone too, run `./uninstall.sh` from a fresh
+clone.
+
+It removes everything the install put in place:
+- the services, the program files, the `barry-launcher` command and the
+  menu entry, plus any folders the install created for them
+- the udev rule and the InputPlumber override (with `sudo`). **Reboot
+  afterwards** so InputPlumber handles the AYN button again
+- logs and runtime files
+
+On Armada, it also turns Armada's own bottom-screen session (Plasma Mobile)
+back on, and starts it right away if Game Mode is running. It does this only
+if it was on before Barry Launcher was installed.
+
+It then asks whether to delete your data as well:
+- your settings and dashboard skins
+- the browser's and Discord's profiles, including logins and history
+- Dino's best score
+
+To decide up front, pass `--purge` (delete it) or `--keep-data` (keep it).
+Without a terminal to ask in, it keeps your data and prints where it is.
+
+Signal is a Flatpak that Barry Launcher may have installed for you. It stays
+installed, because you may use it elsewhere; the uninstaller prints the
+command to remove it.
 
 ### On Armada
 
 Armada runs Plasma Mobile on the bottom screen (`armada-bottom-screen.service`).
 Only one session can hold the bottom screen at a time, so `install.sh`
-turns Armada's off, and `--uninstall` turns it back on. Armada's own
-bottom-screen switch (in its Decky plugin) turns Plasma Mobile back on. Use
-`--uninstall` instead.
+turns Armada's off, and uninstalling turns it back on. Don't use Armada's
+own bottom-screen switch (in its Decky plugin) while Barry Launcher is
+installed: it would start Plasma Mobile alongside Barry. To go back to
+Plasma Mobile, uninstall Barry Launcher.
+
+The InputPlumber override is a copy of Armada's AYN Thor controller file,
+minus the AYN button. If an Armada update changes that file, `barry-launcher
+status` says so; run `./install.sh` again to refresh the copy, or uninstall
+to drop it.
 
 ### Other devices
 

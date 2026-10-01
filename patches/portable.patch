@@ -1,9 +1,9 @@
 diff --git b/usr/bin/barry-launcher b/usr/bin/barry-launcher
 new file mode 100755
-index 0000000..49cf0df
+index 0000000..9235c3f
 --- /dev/null
 +++ b/usr/bin/barry-launcher
-@@ -0,0 +1,43 @@
+@@ -0,0 +1,59 @@
 +#!/bin/bash
 +# barry-launcher: control a running Barry Launcher by hand, or from any
 +# button tool when the device has no button of its own for it.
@@ -12,6 +12,8 @@ index 0000000..49cf0df
 +#   barry-launcher home                 bring the home screen forward
 +#   barry-launcher config               show the settings in effect
 +#   barry-launcher status               are the services running?
++#   barry-launcher uninstall [--purge | --keep-data]
++#                                       remove Barry Launcher completely
 +set -euo pipefail
 +
 +self=$(readlink -f "${BASH_SOURCE[0]}")
@@ -41,9 +43,23 @@ index 0000000..49cf0df
 +    ;;
 +  status)
 +    systemctl --user --no-pager status barry_launcher.service barry_launcher_inputd.service || true
++    # The InputPlumber override is a copy of the OS's file minus the AYN
++    # button; after an OS update changes that file, the copy is stale.
++    src=/usr/share/inputplumber/devices/50-ayn_thor.yaml
++    dst=/etc/inputplumber/devices.d/50-ayn_thor.yaml
++    if sum=$(grep -o "installed by Barry Launcher's install.sh; source sha256 [0-9a-f]*" "$dst" 2>/dev/null); then
++      if [[ "${sum##* }" != "$(sha256sum "$src" 2>/dev/null | cut -d' ' -f1)" ]]; then
++        echo "! InputPlumber's $src changed since Barry Launcher copied it to $dst;"
++        echo "  run install.sh again so the copy follows (your controller settings may be out of date)."
++      fi
++    fi
++    ;;
++  uninstall)
++    shift
++    exec "$lib/barry_launcher_uninstall" "$@"
 +    ;;
 +  *)
-+    sed -n '2,9p' "$self" | sed 's/^# \{0,1\}//'
++    sed -n '2,11p' "$self" | sed 's/^# \{0,1\}//'
 +    [[ -z "${1:-}" || "$1" == -h || "$1" == --help ]] || exit 2
 +    ;;
 +esac
@@ -208,10 +224,10 @@ index 06282b0..c9bd2e4 100755
 +  -- "$BARRY_BOTTOM_CONNECTOR" "$BARRY_BOTTOM_WIDTH" "$BARRY_BOTTOM_HEIGHT"
 diff --git b/usr/lib/barry_launcher/barry_launcher_env b/usr/lib/barry_launcher/barry_launcher_env
 new file mode 100755
-index 0000000..7754d27
+index 0000000..e0e3a60
 --- /dev/null
 +++ b/usr/lib/barry_launcher/barry_launcher_env
-@@ -0,0 +1,116 @@
+@@ -0,0 +1,118 @@
 +#!/bin/bash
 +# barry_launcher_env: Barry Launcher's settings, for every part of it.
 +#
@@ -230,7 +246,9 @@ index 0000000..7754d27
 +BARRY_LIB=$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)
 +
 +# --- defaults: the AYN Thor ---------------------------------------------------
-+BARRY_SHARE=$(cd "$BARRY_LIB/../../share/barry_launcher" 2>/dev/null && pwd || echo /usr/share/barry_launcher)
++# The program's QML (install.sh puts it in lib/barry_launcher/share).
++BARRY_SHARE=$BARRY_LIB/share
++[[ -d "$BARRY_SHARE" ]] || BARRY_SHARE=/usr/share/barry_launcher
 +# Only run where the device tree's compatible string has this ("" = anywhere).
 +BARRY_DEVICE_MATCH="ayn,thor"
 +# The bottom panel: DRM connector, size as the session sees it, and how the

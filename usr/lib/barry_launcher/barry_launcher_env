@@ -16,7 +16,9 @@ set -euo pipefail
 BARRY_LIB=$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)
 
 # --- defaults: the AYN Thor ---------------------------------------------------
-BARRY_SHARE=$(cd "$BARRY_LIB/../../share/barry_launcher" 2>/dev/null && pwd || echo /usr/share/barry_launcher)
+# The program's QML (install.sh puts it in lib/barry_launcher/share).
+BARRY_SHARE=$BARRY_LIB/share
+[[ -d "$BARRY_SHARE" ]] || BARRY_SHARE=/usr/share/barry_launcher
 # Only run where the device tree's compatible string has this ("" = anywhere).
 BARRY_DEVICE_MATCH="ayn,thor"
 # The bottom panel: DRM connector, size as the session sees it, and how the
