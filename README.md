@@ -15,7 +15,9 @@ other ARM ports of SteamOS.
 
 - **Home screen** on the bottom screen, with tiles for a browser, Discord
   (web app), Signal (Flatpak, installed on first use), a trackpad and a
-  keyboard for the top screen.
+  keyboard for the top screen, and Dino.
+- **Dino**: an endless runner after Google Chrome's dinosaur game (see
+  [credits](#license-and-credits)). Tap to jump; it keeps your best score.
 - **On-screen keyboard** that pops up when a text field on the bottom screen
   gets focus.
 - **Top-screen trackpad and keyboard**, so you can use the Steam UI or a game
@@ -115,8 +117,18 @@ for the Thor's 1240×1080 panel and scales to others.
 ## License and credits
 
 GPL-2.0, like pb-os, where Barry Launcher was written ([LICENSE](LICENSE)).
-`barry_launcher_run_bottom` follows Armada's `armada-run-bottom`
-(GPL-2.0-or-later). Built by lavachemist for project-barry.
+Built by lavachemist for project-barry.
+
+- **Dino** is after Google Chrome's Dinosaur Game (2014), created by
+  **Sebastien Gabriel, Alan Bettes and Edward Jung** of Google's Chrome team.
+  Its source is in Chromium, BSD-licensed, © The Chromium Authors:
+  [components/neterror/resources/dino_game](https://source.chromium.org/chromium/chromium/src/+/main:components/neterror/resources/dino_game/).
+  Barry Launcher's version ([`Dino.qml`](usr/share/barry_launcher/shell/Dino.qml))
+  is written anew in QML; it has no Chromium code or sprite images.
+- `barry_launcher_run_bottom` follows Armada's `armada-run-bottom`
+  (GPL-2.0-or-later).
+- The Firefox, Discord and Signal outlines in `Icon.qml` come from
+  [Tabler Icons](https://github.com/tabler/tabler-icons) (MIT).
 
 Written with Claude Code (Anthropic, model Claude Opus 5.5) under the
 direction of lavachemist.

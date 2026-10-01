@@ -31,7 +31,9 @@ change.
 ## Commands
 
 All of them look for pb-os in `../SteamOS-ARM-SM8650`; set `PB_OS=/path` to
-point elsewhere. Run them on Linux or macOS.
+point elsewhere. Run them on Linux or macOS. Barry Launcher changes reach
+pb-os's `thor-fixes` before `main`; pass `thor-fixes` as REF to follow them
+there.
 
 ```sh
 tools/check-parity.sh [REF]     # are we in step with pb-os REF (default main)?
