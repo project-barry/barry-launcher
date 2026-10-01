@@ -1,0 +1,13 @@
+# pb-os files that are NOT imported, but whose behaviour this repo copies by
+# hand. tools/check-parity.sh lists their newer pb-os commits; port any
+# Barry-related change yourself.
+#   AYN button (short press = dashboard, hold = home) -> barry_launcher_buttond
+sm8550-overlay/usr/lib/steamos-sm8550/sm8550-thor-backlightd
+#   Quick controls backend (fan, lights); used only if its socket exists
+sm8550-overlay/usr/lib/steamos-sm8550/sm8550-thor-controlsd
+#   Dual Screen Decky plugin (Steam keyboard -> Barry keyboard); not included
+external-and-mods/Decky/sm8550/dual-screen
+#   How pb-os installs it (units enabled, InputPlumber override, packages)
+scripts/apply-overlays.sh
+#   Game Mode gamescope lending the bottom screen (--lease-connector)
+steamos-overlay/usr/lib/steamos/gamescope-session
