@@ -62,7 +62,7 @@ main() {
   else
     prefix=${prefix:-$HOME/.local}
     say "no install record; removing from the default places (prefix $prefix)"
-    user_paths=("$prefix/lib/barry_launcher" "$prefix/bin/barry-launcher"
+    user_paths=("$prefix/lib/barry_launcher" "$prefix/bin/barry-launcher" "$prefix/bin/barry-app"
                 "${units[@]/#/$unit_dir/}" "$data_home/applications/barry_launcher_desktop.desktop")
     [[ -e /etc/udev/rules.d/70-barry-launcher.rules ]] && root_paths+=(/etc/udev/rules.d/70-barry-launcher.rules)
     if grep -qsF "# installed by Barry Launcher's install.sh" /etc/inputplumber/devices.d/50-ayn_thor.yaml; then

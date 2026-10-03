@@ -32,6 +32,11 @@ other ARM ports of SteamOS.
   and battery, plus quick controls. Skins are plain QML (see
   [the skin guide](usr/share/barry_launcher/dashboard/README.md)).
 - **Hold the AYN button** to go back to the home screen from any app.
+- **Apps anyone can make**: a QML app zipped with a small `barry-app.json`
+  installs with `barry-app install app.zip` and gets its own tile.
+  [barry-launcher-apps](https://github.com/project-barry/barry-launcher-apps)
+  has an example and a wiki on making them. (pb-os installs them from its
+  Decky plugin too; that plugin isn't part of this repo.)
 
 ## How it relates to pb-os
 

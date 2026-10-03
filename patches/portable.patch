@@ -628,7 +628,7 @@ index 2180fc7..8eb14ce 100644
          }
          return null
 diff --git a/usr/share/barry_launcher/shell/Home.qml b/usr/share/barry_launcher/shell/Home.qml
-index 5a38ecc..ba8a6b2 100644
+index f2ad731..bab22be 100644
 --- a/usr/share/barry_launcher/shell/Home.qml
 +++ b/usr/share/barry_launcher/shell/Home.qml
 @@ -12,8 +12,8 @@ Rectangle {
@@ -642,7 +642,7 @@ index 5a38ecc..ba8a6b2 100644
      property var tiles: [
          { app: "browser", name: "Firefox", icon: "firefox", closable: true },
          { app: "discord", name: "Discord", icon: "discord", closable: true },
-@@ -131,7 +131,7 @@ Rectangle {
+@@ -171,7 +171,7 @@ Rectangle {
          width: parent.width * 0.8
          horizontalAlignment: Text.AlignHCenter
          wrapMode: Text.WordWrap

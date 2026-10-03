@@ -154,7 +154,7 @@ mkdir -p "$CONF_DIR"  # your data (settings), not a program folder
   printf 'dir %s\n' "${NEW_DIRS[@]+"${NEW_DIRS[@]}"}" | grep -v '^dir $' || true
 } > "$MANIFEST"
 record() { echo "$1 $2" >> "$MANIFEST"; }
-for p in "$LIBDIR" "$PREFIX/bin/barry-launcher" \
+for p in "$LIBDIR" "$PREFIX/bin/barry-launcher" "$PREFIX/bin/barry-app" \
   "${UNITS[@]/#/$UNIT_DIR/}" "$APPS_DIR/barry_launcher_desktop.desktop"; do
   record user "$p"
 done
@@ -168,6 +168,8 @@ chmod 0755 "$LIBDIR"/*
 cp -R "$SRC/usr/share/barry_launcher" "$LIBDIR/share"
 chmod -R u=rwX,go=rX "$LIBDIR/share"
 install -m 0755 "$SRC/usr/bin/barry-launcher" "$PREFIX/bin/barry-launcher"
+# barry-app: install and make Barry Launcher apps from a terminal.
+ln -sfn "$LIBDIR/barry-app" "$PREFIX/bin/barry-app"
 # The uninstaller, so `barry-launcher uninstall` works without this repo.
 install -m 0755 "$SRC/uninstall.sh" "$LIBDIR/barry_launcher_uninstall"
 
