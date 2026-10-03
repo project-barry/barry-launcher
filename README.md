@@ -1,5 +1,12 @@
 # Barry Launcher
 
+> [!IMPORTANT]
+> **This repo was built with a coding agent: [Claude Code](https://www.anthropic.com/claude-code),
+> running Anthropic's Claude Opus 5.5 (`claude-opus-5-5`).** Claude wrote the
+> code, the commit messages and this README. People set the goals, made the
+> decisions and did the hands-on testing. Review the code before you rely on
+> it. See [a note from lavachemist](https://github.com/project-barry), a human, on Project Barry and generative AI.
+
 A home screen for the AYN Thor's bottom screen while SteamOS's Game Mode runs
 on the top one. This repo is the version you install yourself, for Armada and
 other ARM ports of SteamOS.
