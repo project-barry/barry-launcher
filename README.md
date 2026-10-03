@@ -36,6 +36,10 @@ other ARM ports of SteamOS.
   installs with `barry-app install app.zip` and gets its own tile. So do
   web apps (a website in a Firefox window of its own, such as WhatsApp),
   where Firefox is installed.
+- **Apps that open with games**: link an app to a game and it opens when
+  the game starts. pb-os sets the links in its Decky plugin; here, write
+  `~/.config/barry_launcher/game-links.json` or use shelld's `/game-links`
+  and `/game-event` (something has to report games starting and stopping).
   [barry-launcher-apps](https://github.com/project-barry/barry-launcher-apps)
   has an example and a wiki on making them. (pb-os installs them from its
   Decky plugin too; that plugin isn't part of this repo.)
