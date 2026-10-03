@@ -627,3 +627,27 @@ index 2180fc7..8eb14ce 100644
                  return all[i]
          }
          return null
+diff --git a/usr/share/barry_launcher/shell/Home.qml b/usr/share/barry_launcher/shell/Home.qml
+index 5a38ecc..ba8a6b2 100644
+--- a/usr/share/barry_launcher/shell/Home.qml
++++ b/usr/share/barry_launcher/shell/Home.qml
+@@ -12,8 +12,8 @@ Rectangle {
+     property real s: 1
+     property var running: ({})
+     property var status: ({})  // app -> "Installing…" etc. while it gets ready
+-    // The tiles in order, without the hidden ones (shelld's /apps; the
+-    // Barry Launcher plugin's Apps tab sets them). These until it answers.
++    // The tiles in order, without the hidden ones (shelld's /apps, as
++    // ~/.config/barry_launcher/home.json sets them). These until it answers.
+     property var tiles: [
+         { app: "browser", name: "Firefox", icon: "firefox", closable: true },
+         { app: "discord", name: "Discord", icon: "discord", closable: true },
+@@ -131,7 +131,7 @@ Rectangle {
+         width: parent.width * 0.8
+         horizontalAlignment: Text.AlignHCenter
+         wrapMode: Text.WordWrap
+-        text: "All apps are hidden: Quick Access → Barry Launcher → Apps shows them again."
++        text: "All apps are hidden: delete ~/.config/barry_launcher/home.json to show them again."
+         color: "#eef0f4"
+         opacity: 0.6
+         font { family: "Noto Sans"; pixelSize: 36 * home.s }

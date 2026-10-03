@@ -21,8 +21,12 @@ other ARM ports of SteamOS.
 - **On-screen keyboard** that pops up when a text field on the bottom screen
   gets focus.
 - **Top-screen trackpad and keyboard**, so you can use the Steam UI or a game
-  from the bottom screen. A Desktop Mode version is in the applications menu
-  (KDE).
+  from the bottom screen. It is one app: a trackpad with keys that slide up
+  below it and away again. The Trackpad tile opens it as a full trackpad,
+  the Keyboard tile with the keys up, and a trackpad click on a text field
+  in an app on the top screen brings the keys up (apps that report focus
+  over the accessibility bus, like Firefox; not Steam's own fields or most
+  games). A Desktop Mode version is in the applications menu (KDE).
 - **Performance dashboard**: a short press of the AYN button shows it,
   another hides it. It shows FPS, CPU, GPU, temperatures, fan, power, memory
   and battery, plus quick controls. Skins are plain QML (see
@@ -50,8 +54,9 @@ What the portable version changes:
 
 Not included, because in pb-os they belong to other parts of the Thor
 support:
-- the Dual Screen Decky plugin (bottom screen on/off, per-screen dimmers,
-  Barry's keyboard in place of Steam's)
+- the Barry Launcher Decky plugin (bottom screen on/off, per-screen
+  dimmers, Barry's keyboard in place of Steam's, including for trackpad
+  clicks on Steam's text fields, and the home screen's app order)
 - one brightness slider for both screens
 - waking Steam's idle dim when you touch the bottom screen
 

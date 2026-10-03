@@ -2,8 +2,9 @@ pragma ComponentBehavior: Bound
 // Home screen: app tiles. Black around them (pixels off on the AMOLED).
 // A running app's tile brings it forward and has a close badge (not
 // Trackpad and Keyboard, which close by themselves on Home); holding the
-// AYN button comes back here from any app. Trackpad and Keyboard make the
-// bottom screen the top screen's trackpad and keyboard (TopInputApp.qml).
+// AYN button comes back here from any app. Trackpad and Keyboard open the
+// same app (TopInputApp.qml), the top screen's trackpad and keyboard:
+// Keyboard with the keys up.
 import QtQuick
 
 Rectangle {
@@ -11,6 +12,16 @@ Rectangle {
     property real s: 1
     property var running: ({})
     property var status: ({})  // app -> "Installing…" etc. while it gets ready
+    // The tiles in order, without the hidden ones (shelld's /apps, as
+    // ~/.config/barry_launcher/home.json sets them). These until it answers.
+    property var tiles: [
+        { app: "browser", name: "Firefox", icon: "firefox", closable: true },
+        { app: "discord", name: "Discord", icon: "discord", closable: true },
+        { app: "signal", name: "Signal", icon: "signal", closable: true },
+        { app: "trackpad", name: "Trackpad", icon: "trackpad", closable: false },
+        { app: "keyboard", name: "Keyboard", icon: "keyboard", closable: false },
+        { app: "dino", name: "Dino", icon: "dino", closable: true },
+    ]
     signal launch(string app)
     signal close(string app)
 
@@ -102,38 +113,28 @@ Rectangle {
         columnSpacing: 60 * home.s
         rowSpacing: 30 * home.s
 
-        Tile {
-            app: "browser"
-            name: "Firefox"
-            iconKind: "firefox"
+        Repeater {
+            model: home.tiles
+            delegate: Tile {
+                required property var modelData
+                app: modelData.app
+                name: modelData.name
+                iconKind: modelData.icon
+                closable: modelData.closable
+            }
         }
-        Tile {
-            app: "discord"
-            name: "Discord"
-            iconKind: "discord"
-        }
-        Tile {
-            app: "signal"
-            name: "Signal"
-            iconKind: "signal"
-        }
-        Tile {
-            app: "trackpad"
-            name: "Trackpad"
-            iconKind: "trackpad"
-            closable: false
-        }
-        Tile {
-            app: "keyboard"
-            name: "Keyboard"
-            iconKind: "keyboard"
-            closable: false
-        }
-        Tile {
-            app: "dino"
-            name: "Dino"
-            iconKind: "dino"
-        }
+    }
+
+    Text {
+        visible: home.tiles.length === 0
+        anchors.centerIn: parent
+        width: parent.width * 0.8
+        horizontalAlignment: Text.AlignHCenter
+        wrapMode: Text.WordWrap
+        text: "All apps are hidden: delete ~/.config/barry_launcher/home.json to show them again."
+        color: "#eef0f4"
+        opacity: 0.6
+        font { family: "Noto Sans"; pixelSize: 36 * home.s }
     }
 
     Text {
