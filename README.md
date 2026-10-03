@@ -131,7 +131,7 @@ if it was on before Barry Launcher was installed.
 It then asks whether to delete your data as well:
 - your settings and dashboard skins
 - the browser's and Discord's profiles, including logins and history
-- Dino's best score
+- Dino's best score, and the apps you installed with what they saved
 
 To decide up front, pass `--purge` (delete it) or `--keep-data` (keep it).
 Without a terminal to ask in, it keeps your data and prints where it is.
@@ -172,7 +172,8 @@ Built by lavachemist for project-barry.
   **Sebastien Gabriel, Alan Bettes and Edward Jung** of Google's Chrome team.
   Its source is in Chromium, BSD-licensed, © The Chromium Authors:
   [components/neterror/resources/dino_game](https://source.chromium.org/chromium/chromium/src/+/main:components/neterror/resources/dino_game/).
-  Barry Launcher's version ([`Dino.qml`](usr/share/barry_launcher/shell/Dino.qml))
+  Barry Launcher's version ([`apps/dino`](usr/share/barry_launcher/apps/dino/main.qml),
+  an app that comes with Barry Launcher and can be removed like any other)
   is written anew in QML; it has no Chromium code or sprite images.
 - `barry_launcher_run_bottom` follows Armada's `armada-run-bottom`
   (GPL-2.0-or-later).
