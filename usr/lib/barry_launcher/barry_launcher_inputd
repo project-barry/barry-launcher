@@ -15,6 +15,12 @@ keyboard pages (shell/TopInput.qml), which call it on 127.0.0.1:PORT:
                  {"combo": ["ctrl", "2"]}: US layout; characters it cannot
                  type are skipped (the reply counts them)
   POST /release  let go of every held button and key
+  POST /trackpad {"active": bool, "regions": {"pad"|"left"|"right"|"dismiss":
+                 [x, y, w, h] fractions of the screen}, "speed": n}: Desktop
+                 Mode's Trackpad window, at least every 2 s while it is up;
+                 this then reads the bottom touchscreen itself
+                 (barry_trackpad). The reply (and GET /trackpad) says
+                 whether a finger is on the pad and counts dismiss taps.
 
 Game Mode: the bottom screen's gamescope takes no input devices of its own
 (its touches come over the lease socket), so these devices reach only the
@@ -40,6 +46,9 @@ import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
+sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
+import barry_trackpad  # noqa: E402
+
 PORT = 47825
 UINPUT = "/dev/uinput"
 
@@ -56,6 +65,10 @@ REL_X, REL_Y, REL_HWHEEL, REL_WHEEL = 0, 1, 6, 8
 REL_WHEEL_HI_RES, REL_HWHEEL_HI_RES = 11, 12
 BTN_LEFT, BTN_RIGHT, BTN_MIDDLE = 0x110, 0x111, 0x112
 BUS_VIRTUAL = 0x06
+# Game Mode's gamescope hides a pointer that has not moved for 3 s
+# (--hide-cursor-delay 3000), and a hidden pointer's wheel never reaches
+# Steam: a scroll after a still spell first nudges the pointer there and back.
+WAKE_POINTER_S = 2.0
 EVENT = struct.Struct("llHHi")
 SETUP = struct.Struct("HHHH80sI")
 
@@ -140,6 +153,7 @@ class Input:
         self.keyboard = Device("Barry Launcher Keys", keys, [])
         self.rest = [0.0, 0.0]  # sub-pixel motion carried to the next move
         self.wheel = [0, 0]  # hi-res units sent since the last whole notch
+        self.moved_at = 0.0  # monotonic time of the last pointer motion
 
     def pointer(self, dx: float, dy: float) -> None:
         with self.lock:
@@ -151,6 +165,7 @@ class Input:
             self.rest[0] -= ix
             self.rest[1] -= iy
             self.mouse.emit([(EV_REL, REL_X, ix), (EV_REL, REL_Y, iy)])
+            self.moved_at = time.monotonic()
 
     def scroll(self, dx: float, dy: float) -> None:
         with self.lock:
@@ -169,6 +184,10 @@ class Input:
                     self.wheel[i] -= notches * NOTCH
                     events.append((EV_REL, lo, notches))
             if events:
+                if time.monotonic() - self.moved_at > WAKE_POINTER_S:
+                    self.mouse.emit([(EV_REL, REL_X, 1)])
+                    self.mouse.emit([(EV_REL, REL_X, -1)])
+                    self.moved_at = time.monotonic()
                 self.mouse.emit(events)
 
     def button(self, name: str, state: str) -> None:
@@ -215,6 +234,7 @@ class Input:
 
 
 INPUT: Input
+TRACKPAD: barry_trackpad.Trackpad
 
 
 def number(value, limit: float) -> float | None:
@@ -240,6 +260,13 @@ def handle(path: str, body: dict) -> tuple[int, dict]:
             return 400, {"error": "bad button or state"}
         INPUT.button(name, state)
     elif path == "/key":
+        # "back": backspaces first, in the same request (a glided word swapped
+        # for another).
+        back = body.get("back", 0)
+        if not isinstance(back, int) or not 0 <= back <= 100:
+            return 400, {"error": "back must be 0-100"}
+        for _ in range(back):
+            INPUT.named("BackSpace")
         if isinstance(body.get("text"), str) and body["text"]:
             return 200, {"ok": True, "skipped": INPUT.text(body["text"][:1000])}
         if body.get("key") in NAMED:
@@ -249,10 +276,12 @@ def handle(path: str, body: dict) -> tuple[int, dict]:
               and all(k in MODIFIERS for k in body["combo"][:-1])
               and (body["combo"][-1] in NAMED or body["combo"][-1].lower() in CHARS)):
             INPUT.combo(body["combo"])
-        else:
-            return 400, {"error": "need text, a known key or a combo"}
+        elif not back:
+            return 400, {"error": "need text, a known key, a combo or back"}
     elif path == "/release":
         INPUT.release()
+    elif path == "/trackpad":
+        return TRACKPAD.update(body)
     else:
         return 404, {"error": "not found"}
     return 200, {"ok": True}
@@ -294,10 +323,15 @@ class Handler(BaseHTTPRequestHandler):
             return
         try:
             self._json(*handle(self.path.split("?", 1)[0], body))
+        except BrokenPipeError:
+            pass  # the caller stopped waiting for the reply
         except OSError as err:
             self._json(500, {"error": str(err)})
 
     def do_GET(self) -> None:
+        if self.path == "/trackpad":
+            self._json(200, TRACKPAD.state())
+            return
         self._json(200 if self.path == "/" else 404, {"ok": True} if self.path == "/" else {"error": "not found"})
 
     def log_message(self, *_args) -> None:
@@ -305,19 +339,22 @@ class Handler(BaseHTTPRequestHandler):
 
 
 def main() -> int:
-    global INPUT
+    global INPUT, TRACKPAD
     try:
         INPUT = Input()
     except OSError as err:
         log(f"cannot create the uinput devices: {err}")
         return 1
     log("trackpad and keyboard devices ready")
+    TRACKPAD = barry_trackpad.Trackpad(INPUT, log)
     srv = ThreadingHTTPServer(("127.0.0.1", PORT), Handler)
     srv.daemon_threads = True
     signal.signal(signal.SIGTERM, lambda *_: sys.exit(0))
     try:
         srv.serve_forever()
     finally:
+        if TRACKPAD.active:
+            TRACKPAD._stop("quitting")  # never leave KWin without the touchscreen
         INPUT.mouse.close()
         INPUT.keyboard.close()
     return 0

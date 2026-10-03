@@ -1,6 +1,9 @@
 #!/bin/bash
 # barry_launcher_desktop: Barry Launcher's trackpad and keyboard for the AYN
 # Thor's top screen, on the bottom screen in Desktop Mode (Desktop.qml).
+# Portable version: pb-os's Desktop Mode (Barry's home, apps and keyboard as
+# KWin's input method) is set up for PB-OS on the Thor only; elsewhere this
+# stays the trackpad and keyboard window.
 # X11, where a window can refuse keyboard focus; the pointer and keys come
 # from barry_launcher_inputd, started here if it is not running yet.
 systemctl --user start barry_launcher_inputd.service
