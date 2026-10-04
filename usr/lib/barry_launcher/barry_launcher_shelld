@@ -293,6 +293,18 @@ FIREFOX_PREFS = {
 # should not bring up the keyboard as the app opens, nor when an app comes
 # back (the tile tap that brought it is a touch too).
 LAUNCH_QUIET_S = 3.0
+# An app opening flickers: Firefox resizes itself and paints black and grey
+# before its page; Signal (Electron) takes 10 s to show a window, then paints
+# white first. A cover (Keyboard.qml's overlay window: the app's name and a
+# pulse) hides that until the app is ready (CURTAIN, by kind: when it is
+# ready, then seconds for its first paint, seconds before the cover shows at
+# all, so a quick app does not flash one, and seconds at most).
+CURTAIN_POLL_MS = 250
+CURTAIN = {
+    "firefox": {"paint": 1.0, "delay": 0.0, "max": 12.0},  # its page in the window, loading or not
+    "flatpak": {"paint": 1.5, "delay": 0.0, "max": 25.0},  # its window shown
+    "qml": {"paint": 0.3, "delay": 0.7, "max": 10.0},      # its window shown
+}
 SWITCH_QUIET_S = 1.5
 # Text focus shows the keyboard only this soon after a touch.
 TOUCH_NAME = "bottom_touchscreen"
@@ -355,6 +367,9 @@ class State:
         self.touch_began: float | None = None  # monotonic: the latest touch's first finger down
         self.touch_at: tuple[int, int] | None = None  # where (screen pixels) that finger came down
         self.hidden_by_hand = 0.0  # monotonic: the keyboard's own hide (its ⌄ key, a tap beside it)
+        self.curtain = ""  # the name of the app opening under the cover, if any
+        self.curtain_app: str | None = None
+        self.curtain_shows = 0.0  # monotonic: when the cover shows (CURTAIN "delay")
         self.text_acc = None  # the focused editable field, if any
         self.keyboard_height = 0  # the key panel's height, as Keyboard.qml reports it
         self.inset: int | None = None  # GAMESCOPE_FOCUS_BOTTOM_INSET last set
@@ -381,9 +396,9 @@ class State:
             self.visible = visible
             if top is not None:
                 self.top = top
-        # Touches go to the keyboard only while it shows; it turns opaque
-        # on its next poll (100 ms).
-        keyboard_input_focus(visible)
+        # Touches go to the keyboard's window only while it (or the cover
+        # over an opening app) shows; it turns opaque on its next poll.
+        keyboard_input_focus(visible or STATE.curtain_app is not None)
         apply_inset()
 
 
@@ -499,6 +514,7 @@ def go_home() -> None:
     # The home screen slides in (Shell.qml): it sees the new serial, puts
     # itself at the animation's start while still hidden, and says so; then
     # it comes forward. Not waiting long: it comes forward regardless.
+    lower_curtain("left for home")
     with STATE.lock:
         STATE.home_serial += 1
         STATE.home_ready.clear()
@@ -604,12 +620,14 @@ def start_flatpak(app: str, spec: dict) -> None:
                 with open(path, "w", encoding="utf-8") as fh:
                     fh.write(text)
                 log(f"wrote {path}")
+        raise_curtain(app, "flatpak")
         with app_log(app) as out:
             STATE.apps[app] = subprocess.Popen(
                 ["flatpak", "run", ref, *spec.get("desktop_args" if DESKTOP else "args", [])],
                 env=app_env(ACCESSIBILITY_ENABLED="1"),
                 stdin=subprocess.DEVNULL, stdout=out, stderr=subprocess.STDOUT,
             )
+        watch_opening(app, "flatpak", lambda: window_shown(["--classname", spec["window"]]))
         if not DESKTOP:  # KWin shows launch dialogs itself
             threading.Thread(target=surface_dialogs, args=(STATE.apps[app],), daemon=True).start()
         STATE.quiet_until = time.monotonic() + LAUNCH_QUIET_S
@@ -656,12 +674,15 @@ def launch(app: str) -> tuple[int, dict]:
                 STATE.services[app] = proc
                 args += [url, token]
                 log(f"started {app}'s service (pid {proc.pid})")
+            raise_curtain(app, "qml")
             STATE.apps[app] = subprocess.Popen(
                 args,
                 env=app_env(**extra),
                 stdin=subprocess.DEVNULL, stdout=out, stderr=subprocess.STDOUT,
             )
         log(f"started {app} {spec['version']} (pid {STATE.apps[app].pid})")
+        proc = STATE.apps[app]
+        watch_opening(app, "qml", lambda: window_shown(["--pid", str(proc.pid), "--name", spec["window"]]))
         return 200, {"ok": True, "running": False}
     if "qml" in spec or "qmlfile" in spec:
         cmd = (["qml6", TOP_INPUT_QML, "--", spec["qml"]] if "qml" in spec
@@ -701,6 +722,7 @@ def launch(app: str) -> tuple[int, dict]:
     else:
         cmd = ["firefox", "--no-remote", "--profile", profile, *spec["args"]]
         env = app_env(MOZ_USE_XINPUT2="1", MOZ_ENABLE_WAYLAND="0")
+    raise_curtain(app, "firefox")
     STATE.apps[app] = subprocess.Popen(
         cmd,
         env=env,
@@ -708,7 +730,104 @@ def launch(app: str) -> tuple[int, dict]:
     )
     STATE.quiet_until = time.monotonic() + LAUNCH_QUIET_S
     log(f"started {app} (pid {STATE.apps[app].pid})")
+    proc = STATE.apps[app]
+    watch_opening(app, "firefox", lambda: page_shown(proc.pid))
     return 200, {"ok": True, "running": False}
+
+
+def raise_curtain(app: str, kind: str) -> None:
+    """Cover the screen while an app opens (Keyboard.qml draws it, over
+    everything, and takes the touches meanwhile). Game Mode only: under
+    KWin, windows open without that flicker."""
+    if DESKTOP:
+        return
+    STATE.curtain_app = app
+    STATE.curtain = APPS[app]["name"]
+    STATE.curtain_shows = time.monotonic() + CURTAIN[kind]["delay"]
+    keyboard_input_focus(True)
+
+
+def lower_curtain(why: str) -> None:
+    if STATE.curtain_app is None:
+        return
+    log(f"{STATE.curtain_app} {why}: cover off")
+    STATE.curtain_app = None
+    STATE.curtain = ""
+    keyboard_input_focus(STATE.keyboard()["visible"])
+
+
+def watch_opening(app: str, kind: str, ready) -> None:
+    """Take the cover off app once ready() and its first paint (see
+    watch_curtain)."""
+    if STATE.curtain_app == app:
+        GLib.timeout_add(CURTAIN_POLL_MS, watch_curtain, app, kind, ready, STATE.apps[app], time.monotonic(),
+                         [None])
+
+
+def window_shown(search: list[str]) -> bool:
+    """Is a window matching xdotool search ARGS mapped?"""
+    r = subprocess.run(["xdotool", "search", "--onlyvisible", *search], capture_output=True, text=True)
+    return bool(r.stdout.split())
+
+
+def page_shown(pid: int) -> bool:
+    """Has the Firefox with this pid a web page (not about:) in its window?
+    Still loading counts: WhatsApp draws its own loading screen at about 3 s,
+    and stays "busy" until about 13 s."""
+    desk = Atspi.get_desktop(0)
+    for i in range(desk.get_child_count()):
+        fx = desk.get_child_at_index(i)
+        if fx is None or fx.get_process_id() != pid:
+            continue
+        # This side keeps the app's tree as it last saw it (no listener for
+        # its changes here): a Firefox just started looked empty for good.
+        fx.clear_cache()
+        todo = [(fx, 0)]
+        while todo:
+            acc, depth = todo.pop()
+            if acc.get_role() == Atspi.Role.DOCUMENT_WEB:
+                url = (acc.get_document_attributes() or {}).get("DocURL", "")
+                if url.startswith("http") and acc.get_state_set().contains(Atspi.StateType.SHOWING):
+                    return True
+                continue  # not inside a page
+            # application > frame > panel > scroll pane > internal frame >
+            # document web; not into the toolbars and their menus.
+            if depth < 5 and acc.get_role() not in (Atspi.Role.TOOL_BAR, Atspi.Role.MENU, Atspi.Role.MENU_BAR):
+                for j in range(acc.get_child_count()):
+                    c = acc.get_child_at_index(j)
+                    if c is not None:
+                        todo.append((c, depth + 1))
+    return False
+
+
+def watch_curtain(app: str, kind: str, ready, proc: subprocess.Popen, started: float, ready_at: list) -> bool:
+    """Every CURTAIN_POLL_MS while app opens: the cover comes off once it is
+    ready and has had time to paint, if it quits, if it asks something in a
+    launch dialog (Signal's password store), or at the latest after its
+    kind's "max"."""
+    if STATE.curtain_app != app:
+        return False  # off already (home, another app)
+    if proc.poll() is not None:
+        lower_curtain("quit while opening")
+        return False
+    now = time.monotonic()
+    limit = CURTAIN[kind]["max"]
+    if now - started > limit:
+        lower_curtain(f"not ready after {limit:.0f} s")
+        return False
+    if kind == "flatpak" and window_shown(["--classname", DIALOG_CLASS]):
+        lower_curtain("asks something")
+        return False
+    if ready_at[0] is None:
+        try:
+            if ready():
+                ready_at[0] = now
+        except GLib.Error as err:
+            log(f"{app}: cannot tell whether it is ready: {err}")
+    elif now - ready_at[0] >= CURTAIN[kind]["paint"]:
+        lower_curtain(f"ready in {ready_at[0] - started:.1f} s")
+        return False
+    return True
 
 
 def close(app: str) -> tuple[int, dict]:
@@ -1142,7 +1261,8 @@ class Handler(BaseHTTPRequestHandler):
             if h.isdigit() and int(h) != STATE.keyboard_height:
                 STATE.keyboard_height = int(h)
                 apply_inset()
-            self._json(200, STATE.keyboard())
+            curtain = STATE.curtain if time.monotonic() >= STATE.curtain_shows else ""
+            self._json(200, dict(STATE.keyboard(), curtain=curtain))
         elif path == "/top-keyboard":
             with STATE.lock:
                 self._json(200, dict(STATE.top_keyboard))
