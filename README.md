@@ -9,6 +9,8 @@
 
 > [!TIP]
 > **Join the Project Barry community on Discord:** https://discord.gg/euPurKCWc4
+>
+> **Watch Project Barry on YouTube:** https://www.youtube.com/@Project-Barry
 
 A home screen for the AYN Thor's bottom screen while SteamOS's Game Mode runs
 on the top one. This repo is the version you install yourself, for Armada and
